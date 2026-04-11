@@ -21,11 +21,11 @@ syntax-highlighted code blocks, callout boxes, and structured deployment phases.
 ## Workflow
 
 1. Read `references/branding-tokens.md` for color palette and typography
-2. Copy `template.html` from this skill's directory as the starting point
+2. Copy `template.html` and the `assets/` directory from this skill's directory as the starting point
 3. Read `references/css-print-architecture.md` for the print CSS system
 4. Read `references/component-catalog.md` for available UI components
 5. Customize the template content for the specific document
-6. Generate PDF using WeasyPrint (Python)
+6. Generate PDF using WeasyPrint (Python) — ensure `assets/` is in the same directory as the HTML
 
 ## Branding Overview
 
@@ -39,8 +39,13 @@ Illumio's visual identity uses three anchor colors with a warm, professional ton
 
 Typography: **Inter** (Google Fonts) at weights 300-900. Code: JetBrains Mono / Fira Code / Consolas.
 
-Logos are embedded as base64 PNGs in `template.html` — no external dependencies.
-Two variants: **white** (cover, dark backgrounds) and **dark** (section headers, light backgrounds).
+Logos are stored as PNG files in `assets/`:
+- `assets/logo-white.png` — used on the cover (dark backgrounds)
+- `assets/logo-dark.png` — used in section running headers (light backgrounds)
+
+The template references them via relative `src="assets/..."` paths. When generating
+a document, ensure the `assets/` directory is copied alongside the HTML file so
+WeasyPrint can resolve the image paths.
 
 ## Document Architecture
 
@@ -142,7 +147,7 @@ After generating a PDF, verify:
 The template is designed around Illumio but is parameterizable:
 
 1. Replace CSS custom properties in `:root` with the target brand's colors
-2. Swap the two base64 logo strings (search for `data:image/png;base64,`)
+2. Replace the logo files in `assets/` (`logo-white.png` and `logo-dark.png`) with the target brand's logos
 3. Adjust the cover gradient in `.cover { background: linear-gradient(...) }`
 4. Adjust geometric shapes (`.geo-1`, `.geo-2`, `.geo-3`) or remove them
 5. Update the footer copyright text
@@ -174,13 +179,16 @@ Read these for implementation details:
 | `references/css-print-architecture.md` | When modifying print CSS | Page margins, running headers, break rules |
 | `references/component-catalog.md` | When adding content | Callouts, code blocks, tables, steps, inline SVGs |
 | `references/diagrams-guide.md` | When creating diagrams | Excalidraw workflow, hand-coded SVG, Mermaid fallback |
-| `template.html` | Always — this is your starting point | Complete HTML template with all CSS and logos |
+| `template.html` | Always — this is your starting point | Complete HTML template with all CSS (logos in `assets/`) |
+| `assets/logo-white.png` | Copied with template | White logo for cover page and dark backgrounds |
+| `assets/logo-dark.png` | Copied with template | Dark logo for section running headers |
 
 ## Common Pitfalls
 
 - **Do NOT use Chrome print for PDF** — it ignores `position: running()`. WeasyPrint is required.
 - **Do NOT create separate sections for sub-phases** — phases belong inside their parent section.
-- **Do NOT use external images** — embed everything as base64 or inline SVG for portability.
+- **Do NOT embed images as base64 in the HTML** — use external files in `assets/` and reference via `src="assets/..."`. This keeps the template lightweight and avoids burning AI context tokens. For diagrams, use inline SVG.
+- **Do NOT forget to copy `assets/` alongside the HTML** — WeasyPrint needs the logo files at the relative path. When writing the final HTML to the output directory, copy `assets/` there too.
 - **Do NOT set `@page { margin: 0 }` globally** — the running header needs `margin-top: 60px`.
 - **Do NOT use `leverages`, `utilize`, `in order to`** — these are AI speech patterns. Use plain language.
 - **Do NOT hardcode API versions or tenant-specific values** — use `<PLACEHOLDER>` format.
