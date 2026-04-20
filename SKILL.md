@@ -21,11 +21,52 @@ syntax-highlighted code blocks, callout boxes, and structured deployment phases.
 ## Workflow
 
 1. Read `references/branding-tokens.md` for color palette and typography
-2. Copy `template.html` and the `assets/` directory from this skill's directory as the starting point
-3. Read `references/css-print-architecture.md` for the print CSS system
+2. Copy `template.html` **together with the `assets/` and `styles/` directories** from this skill's directory as the starting point. The template is intentionally small (~8 KB of markup + a single `<link>` tag) — the heavy styling lives in `styles/report.css` and the logos in `assets/*.png` so the template stays token-light when Claude reads it.
+3. Read `references/css-print-architecture.md` for the print CSS system (or open `styles/report.css` directly if you need to tweak tokens or print rules)
 4. Read `references/component-catalog.md` for available UI components
-5. Customize the template content for the specific document
-6. Generate PDF using WeasyPrint (Python) — ensure `assets/` is in the same directory as the HTML
+5. Customize the template content for the specific document. Keep the `<link rel="stylesheet" href="styles/report.css">` intact unless you intentionally want to fork the CSS.
+6. Generate PDF using WeasyPrint (Python) — ensure both `assets/` AND `styles/` are present next to the HTML (or pass `base_url` pointing at a directory that contains them)
+7. **Visual review loop (MANDATORY).** Render every page of the PDF to PNG and inspect each one before delivery. Compare against the Visual Review Checklist below. If any item fails — logo distortion, text overflow, diagram label collision, split element, half-empty page — fix the HTML/CSS and re-render. Loop until all checks pass. Do NOT deliver a PDF that has not been visually inspected page-by-page.
+8. **Deliver BOTH the HTML and the PDF.** Always save the final `.html` AND the final `.pdf` side-by-side in the user's output folder and present both. The HTML lets the user hand the file to a web designer, re-edit, or host on an intranet; the PDF is the print-ready deliverable. Never ship only one format.
+
+### Visual Review Checklist
+
+After rendering, inspect every page against these checks. Fix and re-render if any item fails.
+
+| # | Check | Likely fix |
+|---|-------|-----------|
+| 1 | Cover is full-bleed, no running header, gradient + geometric shapes visible | Confirm `.cover { page: cover-page; }` and `@page cover-page { margin: 0 }` |
+| 2 | Running header on every content page: orange top border + logo + SECTION LABEL | Confirm `position: running(running-header)` and `@page { @top-left { content: element(running-header); } }` |
+| 3 | Logo orange mark is a **perfect circle**, not a vertical ellipse | Use an embedded PNG from `assets/` or an inline `<svg><circle></svg>`. Do NOT use a CSS `::before` pseudo-element with `border-radius: 50%` inside an `inline-flex` container — WeasyPrint stretches it into an ellipse |
+| 4 | Section subtitles (uppercase tracking text) fit on one line | Reduce `letter-spacing` to ~1.2px and `font-size` to ~11.5px; keep subtitles short |
+| 5 | Diagram labels and arrows do not overlap the boxes on either side | Widen the SVG `viewBox`, shrink label text, or reposition |
+| 6 | Code blocks, tables, callouts, and diagrams stay on a single page | Apply `break-inside: avoid` |
+| 7 | No empty or half-empty pages where the next section could have flowed in | Override with `.section:nth-child(N) { break-before: auto; }` for short sections |
+| 8 | Headings are not orphaned at the bottom of a page | Apply `break-after: avoid` to `h2, h3, h4` |
+| 9 | In non-English versions, no Spanish/Portuguese text overflows boxes in diagrams | Widen SVG boxes or shorten translated labels (Spanish runs ~15% longer than English) |
+
+### Visual review — implementation pattern
+
+```python
+# After doc.write_pdf('report.pdf'):
+from pdf2image import convert_from_path
+imgs = convert_from_path('report.pdf', dpi=110)
+for i, img in enumerate(imgs, 1):
+    img.save(f'page_{i}.png')
+# Then, via the Read tool, read each page_*.png and compare
+# against the checklist. Iterate on HTML/CSS until all checks pass.
+```
+
+`pdf2image` requires `poppler-utils`. On Debian/Ubuntu: `apt-get install poppler-utils`. On macOS: `brew install poppler`.
+
+### Output delivery — both formats, always
+
+```bash
+cp report.html "$OUTPUT_DIR/Document_Name.html"
+cp report.pdf  "$OUTPUT_DIR/Document_Name.pdf"
+```
+
+Then present BOTH files to the user (via `present_files` in Cowork, or direct links if Claude Code). The HTML enables further editing, intranet hosting, and re-use; the PDF is what goes to the customer.
 
 ## Branding Overview
 
@@ -46,6 +87,41 @@ Logos are stored as PNG files in `assets/`:
 The template references them via relative `src="assets/..."` paths. When generating
 a document, ensure the `assets/` directory is copied alongside the HTML file so
 WeasyPrint can resolve the image paths.
+
+## Repository Structure
+
+The skill is deliberately split into three kinds of files so that the HTML template stays lightweight and cheap to read into context:
+
+```
+illumio-branded-reports/
+├── template.html           ← ~8 KB — markup only, links to CSS + images
+├── styles/
+│   └── report.css          ← all screen + print CSS lives here
+├── assets/
+│   ├── logo-white.png      ← cover (dark backgrounds)
+│   └── logo-dark.png       ← section running headers (light backgrounds)
+├── references/             ← deep-dive docs (read only when needed)
+├── SKILL.md
+└── README.md
+```
+
+**Why the split?** When Claude reads `template.html` it sees structure, not 100 KB of base64 logos or 11 KB of inline CSS. That keeps token usage low across every session that touches this skill. Read `styles/report.css` only when you need to tweak tokens (colors, fonts, page margins) or print rules — otherwise leave it alone and it never enters context.
+
+### Rendering pattern
+
+WeasyPrint resolves `styles/report.css` and `assets/logo-*.png` relative to the HTML's base URL. When the working document sits inside the skill folder (or `assets/` and `styles/` are copied alongside it), this just works:
+
+```python
+from weasyprint import HTML
+HTML(filename='document.html').render().write_pdf('Document.pdf')
+```
+
+When rendering from a different location, either (a) copy `assets/` and `styles/` next to `document.html`, or (b) pass `base_url` pointing at the skill root:
+
+```python
+HTML(filename='/path/to/document.html',
+     base_url='/path/to/illumio-branded-reports/').write_pdf('Document.pdf')
+```
 
 ## Document Architecture
 
@@ -146,13 +222,13 @@ After generating a PDF, verify:
 
 The template is designed around Illumio but is parameterizable:
 
-1. Replace CSS custom properties in `:root` with the target brand's colors
-2. Replace the logo files in `assets/` (`logo-white.png` and `logo-dark.png`) with the target brand's logos
-3. Adjust the cover gradient in `.cover { background: linear-gradient(...) }`
-4. Adjust geometric shapes (`.geo-1`, `.geo-2`, `.geo-3`) or remove them
-5. Update the footer copyright text
+1. In `styles/report.css`, replace the CSS custom properties in `:root` with the target brand's colors
+2. Replace the logo files in `assets/` (`logo-white.png` and `logo-dark.png`) with the target brand's logos (keep the same filenames so `template.html` still resolves)
+3. In `styles/report.css`, adjust the cover gradient in `.cover { background: linear-gradient(...) }`
+4. Adjust geometric shapes (`.geo-1`, `.geo-2`, `.geo-3`) in `styles/report.css` or remove them
+5. Update the footer copyright text in `template.html`
 
-The structural CSS (running headers, page breaks, components) stays unchanged.
+The structural CSS (running headers, page breaks, components) in `styles/report.css` stays unchanged — that's why the template markup and the stylesheet live in separate files.
 
 ## Document Structure is Flexible
 
@@ -179,7 +255,8 @@ Read these for implementation details:
 | `references/css-print-architecture.md` | When modifying print CSS | Page margins, running headers, break rules |
 | `references/component-catalog.md` | When adding content | Callouts, code blocks, tables, steps, inline SVGs |
 | `references/diagrams-guide.md` | When creating diagrams | Excalidraw workflow, hand-coded SVG, Mermaid fallback |
-| `template.html` | Always — this is your starting point | Complete HTML template with all CSS (logos in `assets/`) |
+| `template.html` | Always — this is your starting point | Markup-only HTML (links to `styles/report.css` and `assets/*`) |
+| `styles/report.css` | When tweaking colors, fonts, page margins, or print rules | All screen + print CSS, extracted from the template so the HTML stays small |
 | `assets/logo-white.png` | Copied with template | White logo for cover page and dark backgrounds |
 | `assets/logo-dark.png` | Copied with template | Dark logo for section running headers |
 
@@ -188,7 +265,8 @@ Read these for implementation details:
 - **Do NOT use Chrome print for PDF** — it ignores `position: running()`. WeasyPrint is required.
 - **Do NOT create separate sections for sub-phases** — phases belong inside their parent section.
 - **Do NOT embed images as base64 in the HTML** — use external files in `assets/` and reference via `src="assets/..."`. This keeps the template lightweight and avoids burning AI context tokens. For diagrams, use inline SVG.
-- **Do NOT forget to copy `assets/` alongside the HTML** — WeasyPrint needs the logo files at the relative path. When writing the final HTML to the output directory, copy `assets/` there too.
+- **Do NOT paste the full CSS back into `<style>` inside `template.html`** — the stylesheet lives in `styles/report.css` precisely so the HTML stays under ~8 KB. Leave the `<link rel="stylesheet" href="styles/report.css">` in place.
+- **Do NOT forget to copy `assets/` AND `styles/` alongside the HTML** — WeasyPrint needs both at their relative paths. When writing the final HTML to the output directory, copy both folders there too (or pass `base_url` to WeasyPrint pointing at a directory that has them).
 - **Do NOT set `@page { margin: 0 }` globally** — the running header needs `margin-top: 60px`.
 - **Do NOT use `leverages`, `utilize`, `in order to`** — these are AI speech patterns. Use plain language.
 - **Do NOT hardcode API versions or tenant-specific values** — use `<PLACEHOLDER>` format.
