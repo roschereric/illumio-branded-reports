@@ -20,14 +20,17 @@ syntax-highlighted code blocks, callout boxes, and structured deployment phases.
 
 ## Workflow
 
+0. **Personal information & sensitive data check (MANDATORY — read FIRST).** Read `references/personal-info-policy.md` and apply its §2 protocol *before generating any content*. Inventory every value the report will need (names, emails, contact details, customer/partner identifiers, IPs, hostnames, license counts, etc.). For any value classified as Missing-critical, STOP and ask the user. Default to the placeholder convention in §3 of that policy for Missing-substitutable fields. Never invent personal or organizational identifiers — these reports go to customers, partners, and Illumio leadership.
 1. Read `references/branding-tokens.md` for color palette and typography
 2. Copy `template.html` **together with the `assets/` and `styles/` directories** from this skill's directory as the starting point. The template is intentionally small (~8 KB of markup + a single `<link>` tag) — the heavy styling lives in `styles/report.css` and the logos in `assets/*.png` so the template stays token-light when Claude reads it.
 3. Read `references/css-print-architecture.md` for the print CSS system (or open `styles/report.css` directly if you need to tweak tokens or print rules)
 4. Read `references/component-catalog.md` for available UI components
 5. Customize the template content for the specific document. Keep the `<link rel="stylesheet" href="styles/report.css">` intact unless you intentionally want to fork the CSS.
 6. Generate PDF using WeasyPrint (Python) — ensure both `assets/` AND `styles/` are present next to the HTML (or pass `base_url` pointing at a directory that contains them)
-7. **Visual review loop (MANDATORY).** Render every page of the PDF to PNG and inspect each one before delivery. Compare against the Visual Review Checklist below. If any item fails — logo distortion, text overflow, diagram label collision, split element, half-empty page — fix the HTML/CSS and re-render. Loop until all checks pass. Do NOT deliver a PDF that has not been visually inspected page-by-page.
-8. **Deliver BOTH the HTML and the PDF.** Always save the final `.html` AND the final `.pdf` side-by-side in the user's output folder and present both. The HTML lets the user hand the file to a web designer, re-edit, or host on an intranet; the PDF is the print-ready deliverable. Never ship only one format.
+7. **Programmatic pre-flight (MANDATORY).** Before the human visual review, run the four deterministic checks documented in `references/visual-verification.md` — SVG text overflow, DOM horizontal overflow, image load, and z-index sanity. The bundled `scripts/visual_verify.py` runs them in one pass against the rendered HTML. Fix anything it flags before continuing. These checks catch a class of bugs that the human visual checklist below cannot reliably spot (especially silent SVG text overflow).
+8. **Visual review loop (MANDATORY — every section, no sampling).** Render every page of the PDF to PNG and inspect each one before delivery. Compare against the Visual Review Checklist below. **Do NOT sample "a couple of representative sections"** — walk every section, every page, every diagram. Customer-, partner-, and executive-facing collateral does not tolerate sampling. If any item fails — logo distortion, text overflow, diagram label collision, split element, half-empty page — fix the HTML/CSS and re-render. Loop until all checks pass. Do NOT deliver a PDF that has not been visually inspected page-by-page.
+9. **Deliver BOTH the HTML and the PDF.** Always save the final `.html` AND the final `.pdf` side-by-side in the user's output folder and present both. The HTML lets the user hand the file to a web designer, re-edit, or host on an intranet; the PDF is the print-ready deliverable. Never ship only one format.
+10. **Cleanup — retain only error evidence.** After all checks pass, archive the rendered evidence: keep ONLY the PNGs that documented an actual defect (move them to a `_findings/` folder with a short `README.md` cross-referencing each capture to the bug and fix). Delete intermediate `_render/` PNGs from successive iterations. The deliverable folder should contain the final HTML + PDF + (optionally) `_findings/` evidence, not 30+ intermediate captures.
 
 ### Visual Review Checklist
 
@@ -43,7 +46,7 @@ After rendering, inspect every page against these checks. Fix and re-render if a
 | 6 | Code blocks, tables, callouts, and diagrams stay on a single page | Apply `break-inside: avoid` |
 | 7 | No empty or half-empty pages where the next section could have flowed in | Override with `.section:nth-child(N) { break-before: auto; }` for short sections |
 | 8 | Headings are not orphaned at the bottom of a page | Apply `break-after: avoid` to `h2, h3, h4` |
-| 9 | In non-English versions, no Spanish/Portuguese text overflows boxes in diagrams | Widen SVG boxes or shorten translated labels (Spanish runs ~15% longer than English) |
+| 9 | In non-English versions, no Spanish/Portuguese text overflows boxes in diagrams | Widen SVG boxes or shorten translated labels (Spanish runs ~15% longer than English). **SVG sub-rule:** SVG `<text>` does NOT auto-wrap. For ES/PT sentences over ~80 characters inside an SVG, pre-wrap into multiple `<text>` rows (with `text-anchor="middle"` and incremented `y`) OR render inside a `<foreignObject>` HTML block which DOES wrap. |
 
 ### Visual review — implementation pattern
 
@@ -145,6 +148,46 @@ Each `<div class="section">` represents a logical document section. In print:
 - Default: each section forces a new page via `break-before: page`
 - Override short sections to flow after the previous one: `.section:nth-child(N) { break-before: auto; }`
 - The first section always flows after the cover (`:first-child`)
+
+### Cover Stacking Rules (Critical — Read This)
+
+The cover places decorative absolutely-positioned shapes (`.geo-1`, `.geo-2`, `.geo-3`, dot matrices) on the same canvas as the title, subtitle, and logo. Without an explicit stacking context, source order determines paint order — meaning a long title can render *behind* a decorative shape, with the trailing glyphs clipped or completely hidden. This is silent: the title is in the DOM, but the reader sees only part of it.
+
+**The rule:** wrap all foreground cover content in a `.cover-content` container with its own stacking context, and constrain its `max-width` so it cannot intrude into the decoration zone even when the title wraps.
+
+```css
+.cover {
+  position: relative;
+  isolation: isolate;          /* creates a stacking context */
+  overflow: hidden;
+}
+.cover-content {
+  position: relative;
+  z-index: 2;                  /* always above decorative shapes */
+  max-width: 560px;            /* keeps title out of the geo zone */
+}
+.cover .geo-1,
+.cover .geo-2,
+.cover .geo-3 { position: absolute; z-index: 1; }
+```
+
+```html
+<div class="cover">
+  <div class="geo-1"></div>
+  <div class="geo-2"></div>
+  <div class="geo-3"></div>
+  <div class="cover-content">
+    <img class="cover-logo" src="assets/logo-white.png" alt="Illumio">
+    <span class="cover-tag">SECTION / POC LABEL</span>
+    <h1>Document Title (Spanish titles may run wider)</h1>
+    <p class="subtitle">…</p>
+  </div>
+</div>
+```
+
+**Why `max-width` matters even when `z-index` is correct:** a long Spanish title (e.g., `Reacción ante Nuevas Amenazas`) running ~38px font-weight 800 will *wrap* into the decoration zone if its container is full-width. The reader then sees the second line behind a parallelogram. `max-width: 560px` forces it to wrap earlier and stay inside the safe zone. Adjust the value if your cover layout differs.
+
+The programmatic pre-flight (`scripts/visual_verify.py`, check 4) flags any `<h1>`/`<h2>` whose bounding rect intersects a `.geo-*` element with insufficient z-index.
 
 ### Running Headers (Critical — Read This)
 
@@ -251,17 +294,25 @@ Read these for implementation details:
 
 | File | When to Read | Content |
 |------|-------------|---------|
+| `references/personal-info-policy.md` | **MANDATORY — Step 0 of every run** | Categories of information not to hallucinate; protocol for asking the user before generating any content; placeholder convention. **Live policy — update as new categories surface.** |
 | `references/branding-tokens.md` | Always | Full color palette, typography, spacing |
+| `references/visual-verification.md` | **Step 7 — programmatic pre-flight** | Deep-dive on the four deterministic checks (SVG text overflow, DOM horizontal overflow, image load, z-index sanity), install/run instructions, defect-category catalog |
 | `references/css-print-architecture.md` | When modifying print CSS | Page margins, running headers, break rules |
 | `references/component-catalog.md` | When adding content | Callouts, code blocks, tables, steps, inline SVGs |
 | `references/diagrams-guide.md` | When creating diagrams | Excalidraw workflow, hand-coded SVG, Mermaid fallback |
 | `template.html` | Always — this is your starting point | Markup-only HTML (links to `styles/report.css` and `assets/*`) |
 | `styles/report.css` | When tweaking colors, fonts, page margins, or print rules | All screen + print CSS, extracted from the template so the HTML stays small |
+| `scripts/visual_verify.py` | Step 7 — run before visual review | Bundled Playwright-based pre-flight checker. Runs the four deterministic checks from `references/visual-verification.md` in one pass. |
 | `assets/logo-white.png` | Copied with template | White logo for cover page and dark backgrounds |
 | `assets/logo-dark.png` | Copied with template | Dark logo for section running headers |
+| `evals/evals.json` | When testing or regression-checking | Real-world inputs that broke earlier versions of this skill — each case has input fixture, expected programmatic detection, and expected fix |
 
 ## Common Pitfalls
 
+- **Do NOT skip Step 0 (personal info policy).** Reports go to customers, partners, and Illumio leadership. Hallucinated names, emails, IPs, or deal sizes embarrass everyone involved. If the report needs a value and the user didn't supply it, ASK — or use a `<PLACEHOLDER>`. Never invent.
+- **Do NOT sample "a couple of representative sections" during visual review.** Walk every section, every page, every diagram. In an 11-section document, sampling 5 will miss defects concentrated in the 6 you skipped. Sampling is the meta-bug that lets every other visual bug ship.
+- **Do NOT use creative-writing analogies in customer-facing copy** (musical instruments, sports metaphors, food comparisons, animal references). Customer-facing collateral and executive review require direct, technical comparisons. *"The Sentinel playbook needs Azure + Logic Apps; the portable script applies when those are absent"* — yes. *"The playbook is a symphony orchestra, the script is an acoustic guitar"* — no.
+- **Do NOT put cover decorative elements in the same stacking context as the title** without an explicit z-index pattern. See Cover Stacking Rules. A long title silently rendered behind a parallelogram is invisible in markup review and obvious only when rendered.
 - **Do NOT use Chrome print for PDF** — it ignores `position: running()`. WeasyPrint is required.
 - **Do NOT create separate sections for sub-phases** — phases belong inside their parent section.
 - **Do NOT embed images as base64 in the HTML** — use external files in `assets/` and reference via `src="assets/..."`. This keeps the template lightweight and avoids burning AI context tokens. For diagrams, use inline SVG.
